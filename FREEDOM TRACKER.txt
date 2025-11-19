@@ -1,0 +1,617 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Asteroid Shooter</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        /* Custom CSS for the Game Canvas and Layout */
+        @import url('https://fonts.googleapis.com/css2?family=Space+Mono:wght@400;700&display=swap');
+        
+        body {
+            font-family: 'Space Mono', monospace;
+            background-color: #0d1117; /* Dark space background */
+            color: #ffffff;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            min-height: 100vh;
+            margin: 0;
+            padding: 10px;
+            overflow: hidden; /* Prevent scrolling */
+        }
+
+        #game-container {
+            width: 100%;
+            max-width: 600px;
+            border: 4px solid #38bdf8; /* Sky Blue Border */
+            border-radius: 12px;
+            box-shadow: 0 0 20px #38bdf8;
+            background-color: #000000;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            padding: 10px;
+        }
+
+        canvas {
+            background-color: #030712; /* Very dark background for the game area */
+            display: block;
+            width: 100%;
+            border-radius: 8px;
+            touch-action: none; /* Important for preventing mobile scrolling while touching controls */
+        }
+
+        /* Responsive Control Styles */
+        #controls {
+            display: flex;
+            justify-content: space-between;
+            width: 100%;
+            max-width: 400px; /* Limit control width */
+            margin-top: 15px;
+        }
+
+        .control-button {
+            padding: 15px 25px;
+            background-color: #1f2937;
+            color: #ffffff;
+            border: 2px solid #6b7280;
+            border-radius: 8px;
+            cursor: pointer;
+            font-size: 1.25rem;
+            transition: all 0.1s ease-in-out;
+            box-shadow: 0 4px #4b5563;
+            user-select: none; /* Prevent text selection */
+            flex-grow: 1;
+            margin: 0 5px;
+            text-align: center;
+        }
+
+        .control-button:active {
+            box-shadow: 0 1px #4b5563;
+            transform: translateY(3px);
+            background-color: #374151;
+        }
+
+        #fire-button {
+            background-color: #ef4444; /* Red for Fire */
+            border-color: #b91c1c;
+            box-shadow: 0 4px #b91c1c;
+        }
+        #fire-button:active {
+            box-shadow: 0 1px #b91c1c;
+            transform: translateY(3px);
+            background-color: #dc2626;
+        }
+
+        /* Game Info Bar */
+        #game-info {
+            width: 100%;
+            display: flex;
+            justify-content: space-between;
+            padding: 8px 15px;
+            margin-bottom: 10px;
+            background-color: #1f2937;
+            border-radius: 8px;
+        }
+        #game-info span {
+            font-weight: bold;
+            color: #fcd34d; /* Yellow accents */
+        }
+
+        /* Game Over Modal */
+        #game-over-modal {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: rgba(0, 0, 0, 0.8);
+            display: none; /* Hidden by default */
+            justify-content: center;
+            align-items: center;
+            flex-direction: column;
+            z-index: 10;
+            border-radius: 8px;
+        }
+
+        #game-over-modal h2 {
+            font-size: 2.5rem;
+            color: #f87171;
+            margin-bottom: 10px;
+        }
+
+        #game-over-modal p {
+            font-size: 1.5rem;
+            color: #fcd34d;
+            margin-bottom: 20px;
+        }
+    </style>
+</head>
+<body>
+
+<div id="game-container">
+    <div id="game-info">
+        <span>Score: <span id="score-display">0</span></span>
+        <span>Lives: <span id="lives-display">3</span></span>
+    </div>
+    <canvas id="gameCanvas" width="600" height="400"></canvas>
+    
+    <!-- Mobile/Touch Controls -->
+    <div id="controls">
+        <button id="left-button" class="control-button">← Move</button>
+        <button id="fire-button" class="control-button">Fire</button>
+        <button id="right-button" class="control-button">Move →</button>
+    </div>
+
+    <!-- Game Over Screen -->
+    <div id="game-over-modal">
+        <h2>GAME OVER</h2>
+        <p>Final Score: <span id="final-score">0</span></p>
+        <button id="restart-button" class="control-button" style="background-color: #10b981; border-color: #059669; box-shadow: 0 4px #059669;">
+            Restart
+        </button>
+    </div>
+</div>
+
+<script>
+    // --- Canvas and Context Setup ---
+    const canvas = document.getElementById('gameCanvas');
+    const ctx = canvas.getContext('2d');
+    
+    // --- Game State Variables ---
+    let gameLoopId;
+    let score = 0;
+    let lives = 3;
+    let gameOver = false;
+    let lastAsteroidSpawn = 0;
+    const ASTEROID_SPAWN_INTERVAL = 1500; // ms
+    const ASTEROID_MAX_SPEED = 2;
+    const ASTEROID_MIN_SPEED = 0.5;
+    
+    // --- Entities Arrays ---
+    let player = {};
+    let bullets = [];
+    let asteroids = [];
+    let particles = [];
+    
+    // --- Input States (Keyboard and Touch) ---
+    const input = {
+        left: false,
+        right: false,
+        fire: false
+    };
+
+    // --- Utility Functions ---
+
+    /** Simple distance calculation */
+    function distance(x1, y1, x2, y2) {
+        return Math.sqrt(Math.pow(x2 - x1, 2) + Math.pow(y2 - y1, 2));
+    }
+
+    /** Updates the UI displays */
+    function updateUI() {
+        document.getElementById('score-display').textContent = score;
+        document.getElementById('lives-display').textContent = lives;
+    }
+    
+    /** Shows the Game Over screen */
+    function showGameOver() {
+        gameOver = true;
+        cancelAnimationFrame(gameLoopId);
+        document.getElementById('final-score').textContent = score;
+        document.getElementById('game-over-modal').style.display = 'flex';
+    }
+
+    // --- Entity Classes (Simplified Objects) ---
+
+    // Player (Ship)
+    function Player() {
+        this.x = canvas.width / 2;
+        this.y = canvas.height - 40;
+        this.size = 15;
+        this.speed = 5;
+        this.color = '#38bdf8'; // Sky Blue
+        this.canFire = true;
+        this.fireRate = 200; // ms
+        
+        this.draw = function() {
+            ctx.fillStyle = this.color;
+            ctx.beginPath();
+            // Nose of the ship
+            ctx.moveTo(this.x, this.y - this.size);
+            // Bottom left
+            ctx.lineTo(this.x - this.size, this.y + this.size);
+            // Bottom right
+            ctx.lineTo(this.x + this.size, this.y + this.size);
+            ctx.closePath();
+            ctx.fill();
+
+            // Simple engine light
+            ctx.fillStyle = '#fcd34d'; // Yellow
+            ctx.fillRect(this.x - 5, this.y + this.size, 10, 3);
+        };
+        
+        this.update = function() {
+            if (input.left) {
+                this.x = Math.max(this.size, this.x - this.speed);
+            }
+            if (input.right) {
+                this.x = Math.min(canvas.width - this.size, this.x + this.speed);
+            }
+            if (input.fire && this.canFire) {
+                this.shoot();
+            }
+        };
+
+        this.shoot = function() {
+            // Add a new bullet
+            bullets.push(new Bullet(this.x, this.y - this.size));
+            this.canFire = false;
+            
+            // Set a timeout to allow firing again
+            setTimeout(() => {
+                this.canFire = true;
+            }, this.fireRate);
+        };
+    }
+
+    // Bullet
+    function Bullet(x, y) {
+        this.x = x;
+        this.y = y;
+        this.radius = 3;
+        this.speed = 7;
+        this.color = '#10b981'; // Green
+        
+        this.draw = function() {
+            ctx.fillStyle = this.color;
+            ctx.beginPath();
+            ctx.arc(this.x, this.y, this.radius, 0, Math.PI * 2);
+            ctx.fill();
+        };
+        
+        this.update = function() {
+            this.y -= this.speed;
+        };
+    }
+
+    // Asteroid
+    function Asteroid(x, y, radius, vx, vy) {
+        this.x = x;
+        this.y = y;
+        this.radius = radius;
+        this.vx = vx;
+        this.vy = vy;
+        this.color = '#6b7280'; // Gray
+        
+        this.draw = function() {
+            ctx.strokeStyle = this.color;
+            ctx.lineWidth = 2;
+            ctx.beginPath();
+            // Draw a slightly irregular circle (for that asteroid look)
+            let complexity = 0.8;
+            let numPoints = 8;
+            for(let i = 0; i < numPoints; i++) {
+                let angle = (i / numPoints) * Math.PI * 2;
+                let r = this.radius + (Math.random() - 0.5) * complexity * this.radius;
+                let px = this.x + r * Math.cos(angle);
+                let py = this.y + r * Math.sin(angle);
+                if (i === 0) {
+                    ctx.moveTo(px, py);
+                } else {
+                    ctx.lineTo(px, py);
+                }
+            }
+            ctx.closePath();
+            ctx.stroke();
+        };
+        
+        this.update = function() {
+            this.x += this.vx;
+            this.y += this.vy;
+        };
+    }
+
+    // Particle for explosions
+    function Particle(x, y, color, size, vx, vy, lifespan) {
+        this.x = x;
+        this.y = y;
+        this.color = color;
+        this.size = size;
+        this.vx = vx;
+        this.vy = vy;
+        this.lifespan = lifespan;
+        this.age = 0;
+
+        this.draw = function() {
+            ctx.fillStyle = this.color;
+            ctx.globalAlpha = 1 - (this.age / this.lifespan); // Fade out
+            ctx.fillRect(this.x, this.y, this.size, this.size);
+            ctx.globalAlpha = 1;
+        };
+
+        this.update = function() {
+            this.x += this.vx;
+            this.y += this.vy;
+            this.age += 1;
+        };
+    }
+
+
+    // --- Game Logic Functions ---
+
+    /** Initializes all game entities and state */
+    function initGame() {
+        // Reset state
+        score = 0;
+        lives = 3;
+        gameOver = false;
+        bullets = [];
+        asteroids = [];
+        particles = [];
+        lastAsteroidSpawn = performance.now();
+        
+        // Create player
+        player = new Player();
+        player.x = canvas.width / 2;
+        player.y = canvas.height - 40;
+
+        // Reset UI and hide modal
+        updateUI();
+        document.getElementById('game-over-modal').style.display = 'none';
+
+        // Start loop
+        if (gameLoopId) cancelAnimationFrame(gameLoopId);
+        gameLoopId = requestAnimationFrame(gameLoop);
+    }
+
+    /** Spawns a new asteroid from a random edge */
+    function spawnAsteroid(timestamp) {
+        if (timestamp - lastAsteroidSpawn < ASTEROID_SPAWN_INTERVAL) return;
+
+        lastAsteroidSpawn = timestamp;
+        
+        const radius = Math.random() * 20 + 10; // 10 to 30
+        const speed = Math.random() * (ASTEROID_MAX_SPEED - ASTEROID_MIN_SPEED) + ASTEROID_MIN_SPEED;
+
+        let x, y, vx, vy;
+        
+        // Randomly choose edge to spawn from (0: top, 1: left, 2: right)
+        const edge = Math.floor(Math.random() * 3);
+
+        if (edge === 0) { // Top edge
+            x = Math.random() * canvas.width;
+            y = -radius;
+            // Target the bottom half of the screen
+            const angle = Math.atan2(Math.random() * canvas.height * 0.5 + canvas.height * 0.5 - y, Math.random() * canvas.width - x);
+            vx = speed * Math.cos(angle);
+            vy = speed * Math.sin(angle);
+        } else if (edge === 1) { // Left edge
+            x = -radius;
+            y = Math.random() * canvas.height / 2;
+            // Target the center-right area
+            const angle = Math.atan2(Math.random() * canvas.height - y, canvas.width / 2 + Math.random() * canvas.width / 2 - x);
+            vx = speed * Math.cos(angle);
+            vy = speed * Math.sin(angle);
+        } else { // Right edge
+            x = canvas.width + radius;
+            y = Math.random() * canvas.height / 2;
+            // Target the center-left area
+            const angle = Math.atan2(Math.random() * canvas.height - y, canvas.width / 2 - Math.random() * canvas.width / 2 - x);
+            vx = speed * Math.cos(angle);
+            vy = speed * Math.sin(angle);
+        }
+
+        asteroids.push(new Asteroid(x, y, radius, vx, vy));
+    }
+
+    /** Creates a simple explosion of particles */
+    function createExplosion(x, y, count, color) {
+        for (let i = 0; i < count; i++) {
+            const angle = Math.random() * Math.PI * 2;
+            const speed = Math.random() * 3 + 1;
+            const vx = speed * Math.cos(angle);
+            const vy = speed * Math.sin(angle);
+            const size = Math.random() * 2 + 1;
+            const lifespan = Math.random() * 40 + 20;
+            particles.push(new Particle(x, y, color, size, vx, vy, lifespan));
+        }
+    }
+
+    /** Checks and handles all collisions */
+    function checkCollisions() {
+        // Bullet vs Asteroid collision
+        for (let i = bullets.length - 1; i >= 0; i--) {
+            const bullet = bullets[i];
+            
+            for (let j = asteroids.length - 1; j >= 0; j--) {
+                const asteroid = asteroids[j];
+                
+                if (distance(bullet.x, bullet.y, asteroid.x, asteroid.y) < asteroid.radius + bullet.radius) {
+                    // Collision occurred!
+                    createExplosion(asteroid.x, asteroid.y, asteroid.radius * 2, '#fcd34d'); // Yellow explosion
+                    
+                    // Remove both
+                    bullets.splice(i, 1);
+                    asteroids.splice(j, 1);
+                    
+                    score += 10;
+                    updateUI();
+                    break; // Bullet is destroyed, move to next bullet
+                }
+            }
+        }
+
+        // Player vs Asteroid collision (simplified bounding box for player)
+        for (let i = asteroids.length - 1; i >= 0; i--) {
+            const asteroid = asteroids[i];
+            
+            // Check if asteroid center is near player's bounding area
+            const playerCenterY = player.y; // Center point for simplification
+            const collisionDistance = player.size + asteroid.radius;
+
+            if (distance(player.x, playerCenterY, asteroid.x, asteroid.y) < collisionDistance) {
+                // Collision occurred!
+                createExplosion(player.x, player.y, 40, '#f87171'); // Red explosion
+                createExplosion(asteroid.x, asteroid.y, asteroid.radius * 3, '#f87171');
+                
+                // Remove asteroid
+                asteroids.splice(i, 1);
+                
+                lives--;
+                updateUI();
+                
+                if (lives <= 0) {
+                    showGameOver();
+                    return;
+                }
+            }
+        }
+    }
+
+    /** Main game update logic */
+    function updateGame() {
+        if (gameOver) return;
+
+        // Update Player
+        player.update();
+        
+        // Update Bullets
+        for (let i = bullets.length - 1; i >= 0; i--) {
+            bullets[i].update();
+            // Remove off-screen bullets
+            if (bullets[i].y < -bullets[i].radius) {
+                bullets.splice(i, 1);
+            }
+        }
+        
+        // Update Asteroids
+        for (let i = asteroids.length - 1; i >= 0; i--) {
+            asteroids[i].update();
+            // Remove off-screen asteroids (if they pass the bottom)
+            if (asteroids[i].y > canvas.height + asteroids[i].radius) {
+                asteroids.splice(i, 1);
+                // Optionally penalize player for missed asteroid
+            }
+        }
+
+        // Update Particles
+        for (let i = particles.length - 1; i >= 0; i--) {
+            particles[i].update();
+            if (particles[i].age >= particles[i].lifespan) {
+                particles.splice(i, 1);
+            }
+        }
+
+        checkCollisions();
+    }
+
+    /** Main game drawing logic */
+    function drawGame() {
+        // Clear the canvas
+        ctx.clearRect(0, 0, canvas.width, canvas.height);
+        
+        // Draw all entities
+        player.draw();
+
+        bullets.forEach(b => b.draw());
+        asteroids.forEach(a => a.draw());
+        particles.forEach(p => p.draw());
+    }
+
+    /** Main game loop function */
+    function gameLoop(timestamp) {
+        // Handle spawning
+        spawnAsteroid(timestamp);
+
+        // Update
+        updateGame();
+
+        // Draw
+        drawGame();
+        
+        // Loop
+        gameLoopId = requestAnimationFrame(gameLoop);
+    }
+    
+    // --- Event Listeners ---
+    
+    // 1. Keyboard Controls (Desktop)
+    document.addEventListener('keydown', (e) => {
+        if (gameOver) return;
+        if (e.key === 'ArrowLeft' || e.key === 'a' || e.key === 'A') input.left = true;
+        if (e.key === 'ArrowRight' || e.key === 'd' || e.key === 'D') input.right = true;
+        if (e.key === ' ' || e.key === 'w' || e.key === 'W') input.fire = true;
+    });
+
+    document.addEventListener('keyup', (e) => {
+        if (e.key === 'ArrowLeft' || e.key === 'a' || e.key === 'A') input.left = false;
+        if (e.key === 'ArrowRight' || e.key === 'd' || e.key === 'D') input.right = false;
+        if (e.key === ' ' || e.key === 'w' || e.key === 'W') input.fire = false;
+    });
+    
+    // 2. Mobile/Touch Controls
+    const leftButton = document.getElementById('left-button');
+    const rightButton = document.getElementById('right-button');
+    const fireButton = document.getElementById('fire-button');
+    const restartButton = document.getElementById('restart-button');
+
+    // Generic touch handler for pressing/releasing a button
+    function setupTouchControl(element, inputProperty) {
+        // Press down/Start touch
+        element.addEventListener('touchstart', (e) => {
+            e.preventDefault();
+            if (!gameOver) input[inputProperty] = true;
+        });
+        
+        // Release/End touch
+        element.addEventListener('touchend', (e) => {
+            e.preventDefault();
+            input[inputProperty] = false;
+        });
+        // Handle cancellation (like moving touch outside the element)
+        element.addEventListener('touchcancel', (e) => {
+            e.preventDefault();
+            input[inputProperty] = false;
+        });
+    }
+
+    setupTouchControl(leftButton, 'left');
+    setupTouchControl(rightButton, 'right');
+    setupTouchControl(fireButton, 'fire');
+
+    // Restart Button
+    restartButton.addEventListener('click', initGame);
+
+    // 3. Canvas Resizing for Responsiveness
+    function resizeCanvas() {
+        const container = document.getElementById('game-container');
+        // Set fixed aspect ratio (e.g., 600x400 ratio)
+        const aspectRatio = 600 / 400;
+        
+        // Get the computed width of the container (max 600px)
+        const containerWidth = container.clientWidth - 20; // accounting for container padding
+        
+        canvas.width = containerWidth;
+        canvas.height = containerWidth / aspectRatio;
+
+        // Re-center player on resize
+        if (player.x) {
+            player.x = canvas.width / 2;
+        }
+    }
+
+    // --- Initialization ---
+    window.addEventListener('load', () => {
+        // Initial setup
+        resizeCanvas();
+        initGame();
+    });
+    
+    window.addEventListener('resize', resizeCanvas);
+
+</script>
+</body>
+</html>
